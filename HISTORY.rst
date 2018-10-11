@@ -10,14 +10,10 @@ Unreleased
 
 Added
 ^^^^^
-* Better support for R412.
-* errors for AT commands and module errors will throw python exceptions.
+
 
 Changed
 ^^^^^^^
-* Renamed function to set up the module from init to setup to have a clearer API.
-* Improvement of api and made methods common.
-* setting bands on r4 modules.
 
 Deprecated
 ^^^^^^^^^^
@@ -31,7 +27,21 @@ Fixed
 Security
 ^^^^^^^^
 
+v0.0.2
+------
 
-V 0.0.1
--------
+Added
+^^^^^
+* Better support for R412.
+* errors for AT commands and module errors will throw python exceptions.
+* setting bands on r4 modules.
+
+
+Changed
+^^^^^^^
+* Renamed function to set up the module from init to setup to have a clearer API.
+* Improvement of api and made methods common.
+
+v0.0.1
+------
 First version. Support for SARA-N211 and initial support for SARA-R412
