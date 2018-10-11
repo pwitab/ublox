@@ -19,14 +19,26 @@ About
 
 The ublox library gives a python interface to AT Commands via serial interface
 to Ublox modules. This can used for testing and profiling of modules and
-technologies or you might want to hook up a small python program to send data
-over NB-IoT.
+technologies or you might want to hook up a small python program on an embedded
+device to send data over, for example, NB-IoT.
 
 Supported Modules
 =================
 
 * SARA-N211
 * SARA-R412
+* SARA-R410
+
+Example Use:
+============
+
+.. code-block::
+
+    module = SaraR4Module(serial_port='/dev/tty.usbmodem14111')
+    module.setup()
+    module.connect(operator='tre')
+    module.create_socket()
+    module.send_udp_data('195.34.89.241', 7, 'Message To Echo Server')
 
 Development
 ===========
