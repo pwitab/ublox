@@ -10,15 +10,9 @@ Unreleased
 
 Added
 ^^^^^
-* Arg to specify if the module is roaming or when connecting specify if roaming so that we know what to expect in the connection status.
-* capture_urc flag to _at_command(). So that it is possible to collect the URCs before the OK response.
-* Added the UbloxSocket and UDPSocket classes to be able to handle sockets independant from module.
 
 Changed
 ^^^^^^^
-* Removed operators name and map. Now you need to specify the operator with its MNO_ID. Swedish Telia is for example 24001.
-* Renamed eps_reg_status to registration_status. Even if it does not follow the naming in the ublox manual it is clearer in the code what it is.
-* create_socket now returns a UbloxSocket subclass.
 
 Deprecated
 ^^^^^^^^^^
@@ -31,6 +25,22 @@ Fixed
 
 Security
 ^^^^^^^^
+
+v.0.1.0  (2018-10-24)
+---------------------
+
+Added
+^^^^^
+* Arg to specify if the module is roaming or when connecting specify if roaming so that we know what to expect in the connection status.
+* capture_urc flag to _at_command(). So that it is possible to collect the URCs before the OK response.
+* Added the UbloxSocket and UDPSocket classes to be able to handle sockets independent from module.
+
+Changed
+^^^^^^^
+* Removed operators name and map. Now you need to specify the operator with its MNO_ID. Swedish Telia is for example 24001.
+* Renamed eps_reg_status to registration_status. Even if it does not follow the naming in the ublox manual it is clearer in the code what it is.
+* create_socket now returns a UbloxSocket subclass.
+
 
 v0.0.2
 ------
