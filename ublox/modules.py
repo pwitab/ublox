@@ -5,10 +5,11 @@ import binascii
 from collections import namedtuple
 import logging
 
+from ublox.socket import UDPSocket
+
 logger = logging.getLogger(__name__)
 
 Stats = namedtuple('Stats', 'type name value')
-
 
 
 # TODO: Make communication with the module in a separate thread. Using a queue
@@ -38,6 +39,7 @@ class SaraN211Module:
     AT_ENABLE_POWER_SAVING_MODE = 'AT+NPSMR=1'
     AT_ENABLE_ALL_RADIO_FUNCTIONS = 'AT+CFUN=1'
     AT_REBOOT = 'AT+NRB'
+    AT_CLOSE_SOCKET = 'AT+NSOCL'
 
     AT_GET_IP = 'AT+CGPADDR'
 
@@ -47,6 +49,8 @@ class SaraN211Module:
 
     REBOOT_TIME = 0
 
+    SUPPORTED_SOCKET_TYPES = ['UDP']
+
     def __init__(self, serial_port: str, roaming=False, echo=False):
         self._serial_port = serial_port
         self._serial = serial.Serial(self._serial_port, baudrate=self.BAUDRATE,
@@ -55,6 +59,7 @@ class SaraN211Module:
         self.roaming = roaming
         self.ip = None
         self.connected = False
+        self.sockets = {}
         self.available_messages = list()
         # TODO: make a class containing all states
         self.registration_status = None
@@ -123,12 +128,44 @@ class SaraN211Module:
         self._await_connection(roaming or self.roaming)
         logger.info(f'Connected to {operator}')
 
-    def create_socket(self, port: int):
-        """Creates a socket that can be used to send and recieve data"""
-        logger.info(f'Creating socket on port {port}')
-        at_c = f'AT+NSOCR="DGRAM",17,{port}'
-        socket_id = self._at_action(at_c)
-        logger.info(f'Socket created with id: {socket_id}')
+    def create_socket(self, socket_type='UDP', port: int = None):
+        logger.info(f'Creating {socket_type} socket')
+
+        if socket_type.upper() not in self.SUPPORTED_SOCKET_TYPES:
+            raise ValueError(f'Module does not support {socket_type} sockets')
+
+        sock = None
+        if socket_type.upper() == 'UDP':
+            sock = self._create_upd_socket(port)
+
+        elif socket_type.upper() == 'TCP':
+            sock = self._create_tcp_socket(port)
+
+        logger.info(f'{socket_type} socket created')
+
+        self.sockets[sock.socket_id] = sock
+
+        return sock
+
+    def _create_upd_socket(self, port):
+        at_command = f'AT+NSOCR="DGRAM",17'
+        if port:
+            at_command = at_command + f',{port}'
+
+        socket_id = self._at_action(at_command)
+        sock = UDPSocket(socket_id, self, port)
+        return sock
+
+    def _create_tcp_socket(self, port):
+        raise NotImplementedError('Sara211 does not support TCP')
+
+    def close_socket(self, socket_id):
+        logger.info(f'Closing socket {socket_id}')
+        if socket_id not in self.sockets.keys():
+            raise ValueError('Specified socket id does not exist')
+        result = self._at_action(f'{self.AT_CLOSE_SOCKET}={socket_id}')
+        del self.sockets[socket_id]
+        return result
 
     def send_udp_data(self, host: str, port: int, data: str):
         """Send a UDP message"""
@@ -150,14 +187,14 @@ class SaraN211Module:
         logger.info(f'Recieved UDP message: {response}')
         return response
 
-    def _at_action(self, at_command):
+    def _at_action(self, at_command, capture_urc=False):
         """
         Small wrapper to issue a AT command. Will wait for the Module to return
         OK.
         """
         logger.debug(f'Applying AT Command: {at_command}')
         self._write(at_command)
-        irc = self._read_line_until_contains('OK')
+        irc = self._read_line_until_contains('OK', capture_urc=capture_urc)
         if irc is not None:
             logger.debug(f'AT Command response = {irc}')
         return irc
@@ -202,7 +239,7 @@ class SaraN211Module:
         else:
             return line
 
-    def _read_line_until_contains(self, slice):
+    def _read_line_until_contains(self, slice, capture_urc=False):
         """
         Similar to read_until, but will read whole lines so we can use proper
         timeout management. Any URC:s that is read will be handled and we will
@@ -219,7 +256,11 @@ class SaraN211Module:
             line = self._remove_line_ending(self._serial.readline())
 
             if line.startswith(b'+'):
-                self._process_urc(line)
+                if capture_urc:
+                    irc_list.append(line)  # add the urc as an irc
+                else:
+                    self._process_urc(line)
+
             elif line == b'OK':
                 pass
 
@@ -391,15 +432,17 @@ class SaraR4Module(SaraN211Module):
     AT_CREATE_TCP_SOCKET = 'AT+USOCR=6'
     AT_ENABLE_LTE_M_RADIO = 'AT+URAT=7'
     AT_ENABLE_NBIOT_RADIO = 'AT+URAT=8'
+    AT_CLOSE_SOCKET = 'AT+USOCL'
 
     AT_REBOOT = 'AT+CFUN=15'  # R4 specific
 
     REBOOT_TIME = 10
 
-    def __init__(self, serial_port: str, echo=True):
+    SUPPORTED_SOCKET_TYPES = ['UDP', 'TCP']
 
-        super().__init__(serial_port, echo)
-        self.sockets = dict()
+    def __init__(self, serial_port: str, roaming=False, echo=True):
+
+        super().__init__(serial_port, roaming, echo)
 
     def setup(self, radio_mode='NBIOT'):
         self.set_radio_mode(mode=radio_mode)
@@ -452,27 +495,15 @@ class SaraR4Module(SaraN211Module):
         self._at_action(_at_command)
         logger.info(f'PDP Context: {apn}, {pdp_type}')
 
-    def create_socket(self, socket_type='UDP', port: int = None):
-        # TODO: Move to parent object. Have list of supported socket types.
-        logger.info(f'Creating {socket_type} socket')
-        if socket_type.upper() == 'UDP':
-            at_command = self.AT_CREATE_UDP_SOCKET
-
-        elif socket_type.upper() == 'TCP':
-            at_command = self.AT_CREATE_TCP_SOCKET
-
-        else:
-            raise ValueError(
-                f'socket_type can only be of type udp|UPD or tcp|TCP')
-
+    def _create_upd_socket(self, port):
+        at_command = f'{self.AT_CREATE_UDP_SOCKET}'
         if port:
-            at_command += f',{port}'
-
-        result = self._at_action(at_command)
-
-        logger.info(f'{socket_type} socket {result} created')
-
-        return result
+            at_command = at_command + f',{port}'
+        response = self._at_action(at_command, capture_urc=True)
+        socket_id = int(chr(response[0][-1]))
+        sock = UDPSocket(socket_id, self, port)
+        self.sockets[sock.socket_id] = sock
+        return sock
 
     def send_udp_data(self, host: str, port: int, data: str):
         """Send a UDP message"""
