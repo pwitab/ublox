@@ -10,10 +10,12 @@ Unreleased
 
 Added
 ^^^^^
-
+* Arg to specify if the module is roaming or when connecting specify if roaming so that we know what to expect in the connection status.
 
 Changed
 ^^^^^^^
+* Removed operators name and map. Now you need to specify the operator with its MNO_ID. Swedish Telia is for example 24001.
+* Renamed eps_reg_status to registration_status. Even if it does not follow the naming in the ublox manual it is clearer in the code what it is.
 
 Deprecated
 ^^^^^^^^^^

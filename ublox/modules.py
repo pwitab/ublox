@@ -9,7 +9,6 @@ logger = logging.getLogger(__name__)
 
 Stats = namedtuple('Stats', 'type name value')
 
-OPERATOR_MAP = {'TELIA': 24001, 'TRE': 24002}
 
 
 # TODO: Make communication with the module in a separate thread. Using a queue
@@ -48,17 +47,17 @@ class SaraN211Module:
 
     REBOOT_TIME = 0
 
-    def __init__(self, serial_port: str, echo=False):
+    def __init__(self, serial_port: str, roaming=False, echo=False):
         self._serial_port = serial_port
         self._serial = serial.Serial(self._serial_port, baudrate=self.BAUDRATE,
                                      rtscts=self.RTSCTS, timeout=300)
         self.echo = echo
+        self.roaming = roaming
         self.ip = None
-        # TODO: Maybe impelemtn property that would issue AT commands?
         self.connected = False
         self.available_messages = list()
         # TODO: make a class containing all states
-        self.eps_reg_status = None
+        self.registration_status = None
         self.radio_signal_power = None
         self.radio_total_power = None
         self.radio_tx_power = None
@@ -107,7 +106,7 @@ class SaraN211Module:
         self._at_action(self.AT_ENABLE_ALL_RADIO_FUNCTIONS)
         logger.info('All radio functions enabled')
 
-    def connect(self, operator):
+    def connect(self, operator: int, roaming=False):
 
         """Will initiate commands to connect to operators network and wait until
         connected."""
@@ -115,23 +114,13 @@ class SaraN211Module:
         # TODO: Handle connection independent of home network or roaming.
 
         if operator:
-
-            if isinstance(operator, int):
-                # Assumes operator id is sent in
-                operator_id = operator
-
-            else:
-                operator_id = OPERATOR_MAP.get(operator.upper(), None)
-                if operator_id is None:
-                    raise ValueError(f'Operator {operator} is not supported')
-
-            at_command = f'AT+COPS=1,2,"{operator_id}"'
+            at_command = f'AT+COPS=1,2,"{operator}"'
 
         else:
             at_command = f'AT+COPS=0'
 
         self._at_action(at_command)
-        self._await_connection(operator=operator)
+        self._await_connection(roaming or self.roaming)
         logger.info(f'Connected to {operator}')
 
     def create_socket(self, port: int):
@@ -316,7 +305,7 @@ class SaraN211Module:
         But for now we just check the last as int
         """
         status = int(chr(urc[-1]))
-        self.eps_reg_status = status
+        self.registration_status = status
         logger.info(f'Updated status EPS Registration = {status}')
 
     def _update_ip_address_callback(self, urc: bytes):
@@ -382,16 +371,14 @@ class SaraN211Module:
     def __repr__(self):
         return f'NBIoTModule(serial_port="{self._serial_port}")'
 
-    def _await_connection(self, operator):
+    def _await_connection(self, roaming, timeout=180):
 
-        logging.info(f'Awaiting Connection to {operator}')
+        logging.info(f'Awaiting Connection')
 
-        if operator.upper() == 'TELIA':
+        if roaming:
             self._read_line_until_contains('CEREG: 5')
-        elif operator.upper() == 'TRE':
-            self._read_line_until_contains('CEREG: 1')
         else:
-            raise ValueError(f'Operator {operator} is not supported')
+            self._read_line_until_contains('CEREG: 1')
 
 
 class SaraR4Module(SaraN211Module):
@@ -496,27 +483,24 @@ class SaraR4Module(SaraN211Module):
         result = self._at_action(atc)
         return result
 
-    def _await_connection(self, operator, timeout=180):
-        logging.info(f'Awaiting Connection to {operator}')
+    def _await_connection(self, roaming, timeout=180):
+        logging.info(f'Awaiting Connection')
         start_time = time.time()
         while True:
             time.sleep(2)
             self._at_action('AT+CEREG?')
 
-            if self.eps_reg_status == 0:
+            if self.registration_status == 0:
                 continue
 
-            if operator.upper() == 'TELIA':
-                if self.eps_reg_status == 5:
-                    break
-
-            elif operator.upper() == 'TRE':
-                if self.eps_reg_status == 1:
+            if roaming:
+                if self.registration_status == 5:
                     break
 
             else:
-                raise ValueError(f'Operator {operator} is not supported')
+                if self.registration_status == 1:
+                    break
 
             elapsed_time = time.time() - start_time
             if elapsed_time > timeout:
-                raise ConnectionTimeoutError(f'Could not connect to {operator}')
+                raise ConnectionTimeoutError(f'Could not connect')
