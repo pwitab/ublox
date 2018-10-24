@@ -26,8 +26,8 @@ Supported Modules
 =================
 
 * SARA-N211
-* SARA-R412
 * SARA-R410
+* SARA-R412
 
 Example Use:
 ============
@@ -36,19 +36,20 @@ Example Use:
 
     module = SaraR4Module(serial_port='/dev/tty.usbmodem14111')
     module.setup()
-    module.connect(operator='tre')
-    module.create_socket()
-    module.send_udp_data('195.34.89.241', 7, 'Message To Echo Server')
+    module.connect(operator=24001)
+    sock = module.create_socket()
+    sock.sendto(b'Message To Echo Server', ('195.34.89.241', 7))
+    sock.close()
 
 Development
 ===========
 
-The library is currently used for testing infrastructure in Sweden and are somewhat
-hardcoded to that. We will make an effort to remove hardcoded values and have a
-more unified API around the control of the modules.
+The library is currently used for testing infrastructure in Sweden. If you find
+problems in your country please open an issue so we can make the library as
+general as possible.
 
 If you have special need there is always the possibility to used the lower
-level API for AT Commands.
+level API for AT Commands via ._at_command()
 
 If you have use-cases that could be solved with more options on functions, make
 the change yourself and open a pull request or open an issue.
