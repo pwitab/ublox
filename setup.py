@@ -15,7 +15,7 @@ requirements = [
 
 setup(
     name='ublox',
-    version='0.0.2', python_requires='~=3.6',
+    version='0.1.0', python_requires='~=3.6',
     description="Python library for U-blox cellular modules.",
     long_description=readme + '\n\n' + history,
     author="Henrik Palmlund Wahlgren @ Palmlund Wahlgren Innovative Technology AB",
