@@ -13,6 +13,7 @@ Added
 
 Changed
 ^^^^^^^
+update_radio_statistics is now a public function
 
 Deprecated
 ^^^^^^^^^^

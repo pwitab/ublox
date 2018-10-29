@@ -16,8 +16,6 @@ Stats = namedtuple('Stats', 'type name value')
 # for communication of AT commands and implement a state-machine for handling
 # AT-commands. Also always keep reading thte serial line for URCs
 
-# TODO: Make a socket interface
-
 class CMEError(Exception):
     """CME ERROR on Module"""
 
@@ -31,6 +29,10 @@ class ConnectionTimeoutError(Exception):
 
 
 class SaraN211Module:
+    """
+    Represents a Ublox SARA N211 module.
+    Power-optimized NB-IoT (LTE Cat NB1) module.
+    """
     BAUDRATE = 9600
     RTSCTS = False
 
@@ -61,6 +63,7 @@ class SaraN211Module:
         self.connected = False
         self.sockets = {}
         self.available_messages = list()
+        self.imei = None
         # TODO: make a class containing all states
         self.registration_status = None
         self.radio_signal_power = None
@@ -74,9 +77,13 @@ class SaraN211Module:
         self.radio_earfcn = None
         self.radio_pci = None
         self.radio_rsrq = None
+        self.radio_rsrp = None
 
     def reboot(self):
-        """Rebooting the module"""
+        """
+        Rebooting the module. Will run the AT_REBOOT command and also flush the
+        serial port to get rid of trash input from when the module restarted.
+        """
         logger.info('Rebooting module')
         self._at_action(self.AT_REBOOT)
         logger.info('waiting for module to boot up')
@@ -86,8 +93,9 @@ class SaraN211Module:
         logger.info('Module rebooted')
 
     def setup(self):
-        """Running all commands to get the module up an working"""
-
+        """
+        Running all commands to get the module up an working
+        """
         logger.info(f'Starting initiation process')
         self.enable_signaling_connection_urc()
         self.enable_network_registration()
@@ -96,25 +104,38 @@ class SaraN211Module:
         logger.info(f'Finished initiation process')
 
     def enable_psm_mode(self):
+        """
+        Enable Power Save Mode
+        """
         self._at_action(self.AT_ENABLE_POWER_SAVING_MODE)
         logger.info('Enabled Power Save Mode')
 
     def enable_signaling_connection_urc(self):
+        """
+        Enable Signaling Connection URC
+        """
         self._at_action(self.AT_ENABLE_SIGNALING_CONNECTION_URC)
         logger.info('Signaling Connection URC enabled')
 
     def enable_network_registration(self):
+        """
+        Enable Network registration
+        """
         self._at_action(self.AT_ENABLE_NETWORK_REGISTRATION)
         logger.info('Network registration enabled')
 
     def enable_radio_functions(self):
+        """
+        Enable all radio functions.
+        """
         self._at_action(self.AT_ENABLE_ALL_RADIO_FUNCTIONS)
         logger.info('All radio functions enabled')
 
     def connect(self, operator: int, roaming=False):
-
-        """Will initiate commands to connect to operators network and wait until
-        connected."""
+        """
+        Will initiate commands to connect to operators network and wait until
+        connected.
+        """
         logger.info(f'Trying to connect to operator {operator} network')
         # TODO: Handle connection independent of home network or roaming.
 
@@ -129,6 +150,17 @@ class SaraN211Module:
         logger.info(f'Connected to {operator}')
 
     def create_socket(self, socket_type='UDP', port: int = None):
+        """
+        Will return a socket-like object that mimics normal python
+        sockets. The socket will then translate the commands to correct method
+        calls on the module.
+        It will also register the socket on the module class so that they can be
+        reused in the future if they are not closed.
+
+        :param socket_type:
+        :param port:
+        :return: UbloxSocket
+        """
         logger.info(f'Creating {socket_type} socket')
 
         if socket_type.upper() not in self.SUPPORTED_SOCKET_TYPES:
@@ -148,6 +180,9 @@ class SaraN211Module:
         return sock
 
     def _create_upd_socket(self, port):
+        """
+        Will create a UDP-socket for the N211 module
+        """
         at_command = f'AT+NSOCR="DGRAM",17'
         if port:
             at_command = at_command + f',{port}'
@@ -157,9 +192,16 @@ class SaraN211Module:
         return sock
 
     def _create_tcp_socket(self, port):
+        """
+        N211 module only supports UDP.
+        """
         raise NotImplementedError('Sara211 does not support TCP')
 
     def close_socket(self, socket_id):
+        """
+        Will send the correct AT action to close specified socket and remove
+        the reference of it on the module object.
+        """
         logger.info(f'Closing socket {socket_id}')
         if socket_id not in self.sockets.keys():
             raise ValueError('Specified socket id does not exist')
@@ -168,7 +210,9 @@ class SaraN211Module:
         return result
 
     def send_udp_data(self, host: str, port: int, data: str):
-        """Send a UDP message"""
+        """
+        Send a UDP message
+        """
         logger.info(f'Sending UDP message to {host}:{port}  :  {data}')
         _data = binascii.hexlify(data.encode()).upper().decode()
         length = len(data)
@@ -177,7 +221,9 @@ class SaraN211Module:
         return result
 
     def receive_udp_data(self):
-        """Recieve a UDP message"""
+        """
+        Recieve a UDP message
+        """
         # TODO: Do getting of data and parsing in callback on URC.
         logger.info(f'Waiting for UDP message')
         self._read_line_until_contains('+NSONMI')
@@ -190,7 +236,9 @@ class SaraN211Module:
     def _at_action(self, at_command, capture_urc=False):
         """
         Small wrapper to issue a AT command. Will wait for the Module to return
-        OK.
+        OK. Some modules return answers to AT actions as URC:s before the OK
+        and to handle them as IRCs it is possible to set the capture_urc flag
+        and all URCs between the at action and OK will be returned as result.
         """
         logger.debug(f'Applying AT Command: {at_command}')
         self._write(at_command)
@@ -203,7 +251,9 @@ class SaraN211Module:
         """
         Writing data to the module is simple. But it needs to end with \r\n
         to accept the command. The module will answer with an empty line as
-        acknowledgement
+        acknowledgement. If echo is enabled everything that the is sent to the
+        module is returned in the serial line. So we just need to omit it from
+        the acknowledge.
         """
         data_to_send = data
         if isinstance(data, str):  # if someone sent in a string make it bytes
@@ -243,7 +293,8 @@ class SaraN211Module:
         """
         Similar to read_until, but will read whole lines so we can use proper
         timeout management. Any URC:s that is read will be handled and we will
-        return the IRC:s collected.
+        return the IRC:s collected. If capture_urc is set we will return all
+        data as IRCs.
         """
         _slice = slice
         if isinstance(slice, str):
@@ -316,16 +367,24 @@ class SaraN211Module:
             logger.debug(f'Unhandled urc: {urc}')
 
     def _handle_cme_error(self, urc: bytes):
-
+        """
+        Callback to raise CME Error.
+        """
         raise CMEError(urc.decode())
 
     def _add_available_message_callback(self, urc: bytes):
+        """
+        Callback to handle recieved messages.
+        """
         _urc, data = urc.split(b':')
         result = data.lstrip()
         logger.debug(f'Recieved data: {result}')
         self.available_messages.append(result)
 
-    def _update_radio_statistics(self):
+    def update_radio_statistics(self):
+        """
+        Read radio statistics and update the module object.
+        """
         radio_data = self._at_action(self.AT_RADIO_INFORMATION)
         self._parse_radio_stats(radio_data)
 
@@ -333,7 +392,6 @@ class SaraN211Module:
         """
         In the AT urc +CSCON: 1 the last char is indication if the
         connection is idle or connected
-
         """
         status = bool(int(urc[-1]))
         self.connected = status
@@ -360,7 +418,9 @@ class SaraN211Module:
         logger.info(f'Updated the IP Address of the module to {ip_addr}')
 
     def _parse_radio_stats(self, irc_buffer):
-
+        """
+        Parser for radio statistic result
+        """
         stats = [self._parse_radio_stats_string(item) for item in irc_buffer]
 
         for stat in stats:
@@ -413,6 +473,11 @@ class SaraN211Module:
         return f'NBIoTModule(serial_port="{self._serial_port}")'
 
     def _await_connection(self, roaming, timeout=180):
+        """
+        The process to verify that connection has occured is a bit different on
+        different devices. On N211 we need to wait intil we get the +CERREG: x
+        URC.
+        """
 
         logging.info(f'Awaiting Connection')
 
@@ -423,6 +488,10 @@ class SaraN211Module:
 
 
 class SaraR4Module(SaraN211Module):
+
+    """
+    Represents a Ublox SARA R4XX module.
+    """
     BAUDRATE = 115200
     RTSCTS = 1
 
@@ -441,20 +510,29 @@ class SaraR4Module(SaraN211Module):
     SUPPORTED_SOCKET_TYPES = ['UDP', 'TCP']
 
     def __init__(self, serial_port: str, roaming=False, echo=True):
-
         super().__init__(serial_port, roaming, echo)
 
     def setup(self, radio_mode='NBIOT'):
+        """
+        Running all commands to get the module up an working
+        """
+        self.read_imei()
         self.set_radio_mode(mode=radio_mode)
         self.enable_radio_functions()
         self.enable_network_registration()
         self.set_error_format()
         self.set_data_format()
+        self.enable_quality_reporting()
 
     def set_data_format(self):
 
         self._at_action('AT+UDCONF=1,1')  # Set data format to HEX
         logger.info('Data format set to HEX')
+
+    def read_imei(self):
+        logger.info('Reading IMEI from module')
+        result = self._at_action('AT+CGSN')
+        self.imei = int(result[0])
 
     def set_error_format(self):
         self._at_action('AT+CMEE=2')  # enable verbose errors
@@ -480,6 +558,10 @@ class SaraR4Module(SaraN211Module):
 
         self._at_action(f'AT+UBANDMASK=1,{total_band_mask},{total_band_mask}')
 
+    def enable_quality_reporting(self):
+        logger.info('Enables reporting of RSRP and RSRQ via AT+UCGED')
+        self._at_action('AT+UCGED=5')
+
     def set_radio_mode(self, mode):
         # TODO: Move to parent object. And have list of supported radios on object.
         mode_dict = {'NBIOT': self.AT_ENABLE_NBIOT_RADIO,
@@ -495,6 +577,34 @@ class SaraR4Module(SaraN211Module):
         self._at_action(_at_command)
         logger.info(f'PDP Context: {apn}, {pdp_type}')
 
+    def update_radio_statistics(self):
+        """
+        On the R4xx only rsrp and rsrq is available.
+        """
+        result = self._at_action('AT+UCGED?', capture_urc=True)
+        cell_id = None
+        channel_nr = None
+        rsrq = None
+        rsrp = None
+        for item in result:
+            data = item[7:]  # remove the data description
+            if data.endswith(b'\r'):
+                data = data[:-2]
+            else:
+                data = data[:-1]
+
+            if item.startswith(b'+RSRQ'):
+                cell_id, channel_nr, rsrq = data.split(b',')
+
+            elif item.startswith(b'+RSRP'):
+                cell_id, channel_nr, rsrp = data.split(b',')
+
+        self.radio_earfcn = channel_nr
+        self.radio_cell_id = cell_id
+
+        self.radio_rsrp = float(rsrp.decode().replace('"', ''))
+        self.radio_rsrq = float(rsrq.decode().replace('"', ''))
+
     def _create_upd_socket(self, port):
         at_command = f'{self.AT_CREATE_UDP_SOCKET}'
         if port:
@@ -506,7 +616,9 @@ class SaraR4Module(SaraN211Module):
         return sock
 
     def send_udp_data(self, host: str, port: int, data: str):
-        """Send a UDP message"""
+        """
+        Send a UDP message
+        """
         logger.info(f'Sending UDP message to {host}:{port}  :  {data}')
         _data = binascii.hexlify(data.encode()).upper().decode()
         length = len(data)
@@ -515,6 +627,11 @@ class SaraR4Module(SaraN211Module):
         return result
 
     def _await_connection(self, roaming, timeout=180):
+        """
+        The process to verify that connection has occured is a bit different on
+        different devices. On R4xx we need continiously poll the connection
+        status and see if the connection status has changed.
+        """
         logging.info(f'Awaiting Connection')
         start_time = time.time()
         while True:

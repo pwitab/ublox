@@ -41,6 +41,10 @@ Example Use:
     sock.sendto(b'Message To Echo Server', ('195.34.89.241', 7))
     sock.close()
 
+Documentation
+=============
+Full documentation can be found at https://ublox.readthedocs.io/
+
 Development
 ===========
 
@@ -49,7 +53,7 @@ problems in your country please open an issue so we can make the library as
 general as possible.
 
 If you have special need there is always the possibility to used the lower
-level API for AT Commands via ._at_command()
+level API for AT Commands via ._at_action()
 
 If you have use-cases that could be solved with more options on functions, make
 the change yourself and open a pull request or open an issue.
