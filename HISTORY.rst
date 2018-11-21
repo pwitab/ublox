@@ -13,7 +13,6 @@ Added
 
 Changed
 ^^^^^^^
-update_radio_statistics is now a public function
 
 Deprecated
 ^^^^^^^^^^
@@ -27,8 +26,25 @@ Fixed
 Security
 ^^^^^^^^
 
-v.0.1.0  (2018-10-24)
----------------------
+v0.1.1 (2018-11-21)
+-------------------
+
+Added
+^^^^^
+* Added functionality to read data from UDP sockets.
+* Added interface for socket.recvfrom() to socket class.
+* Small wait time on writes not to block interface.
+* Current RAT information
+* Possibility to set socket in listening mode
+
+
+Changed
+^^^^^^^
+* update_radio_statistics is now a public function
+* callback registration process
+
+v0.1.0  (2018-10-24)
+--------------------
 
 Added
 ^^^^^

@@ -45,13 +45,15 @@ class SaraN211Module:
 
     AT_GET_IP = 'AT+CGPADDR'
 
-    AT_SEND_TO = 'AT+NSOST=0'
+    AT_SEND_TO = 'AT+NSOST'
     AT_CHECK_CONNECTION_STATUS = 'AT+CSCON?'
     AT_RADIO_INFORMATION = 'AT+NUESTATS="RADIO"'
 
     REBOOT_TIME = 0
 
     SUPPORTED_SOCKET_TYPES = ['UDP']
+
+    CALLBACKS = {}
 
     def __init__(self, serial_port: str, roaming=False, echo=False):
         self._serial_port = serial_port
@@ -78,6 +80,21 @@ class SaraN211Module:
         self.radio_pci = None
         self.radio_rsrq = None
         self.radio_rsrp = None
+
+        self._add_callback('CSCON', self._update_connection_status_callback)
+        self._add_callback('CEREG', self._update_eps_reg_status_callback)
+        self._add_callback('CGPADDR', self._update_ip_address_callback)
+        self._add_callback('NSONMI', self._add_available_message_callback)
+        self._add_callback('CME ERROR', self._handle_cme_error)
+
+    def _add_callback(self, key, callback):
+        """
+        The add_callback is to that it is easy to define new functions for
+        callbacks on a module. It also enables the user to add their own
+        callback functions to override the existing.
+        """
+
+        self.CALLBACKS[key] = callback
 
     def reboot(self):
         """
@@ -209,14 +226,14 @@ class SaraN211Module:
         del self.sockets[socket_id]
         return result
 
-    def send_udp_data(self, host: str, port: int, data: str):
+    def send_udp_data(self, socket: int, host: str, port: int, data: str):
         """
         Send a UDP message
         """
         logger.info(f'Sending UDP message to {host}:{port}  :  {data}')
         _data = binascii.hexlify(data.encode()).upper().decode()
         length = len(data)
-        atc = f'{self.AT_SEND_TO},"{host}",{port},{length},"{_data}"'
+        atc = f'{self.AT_SEND_TO}={socket},"{host}",{port},{length},"{_data}"'
         result = self._at_action(atc)
         return result
 
@@ -263,6 +280,8 @@ class SaraN211Module:
             # someone didnt add the CR an LN so we need to send it
             data_to_send += b'\r\n'
 
+        # start_time = time.time()
+
         self._serial.write(data_to_send)
 
         logger.debug(f'Sent: {data_to_send}')
@@ -278,10 +297,12 @@ class SaraN211Module:
         if ack != b'\r\n':
             raise ValueError(f'Ack was not received properly, received {ack}')
 
+        # To give the end devices some time to answer. Recommended is 20 ms  # end_time = time.time()  # duration = end_time - start_time  # if duration < 0.02:  #    delta = 0.02-duration  #    time.sleep(delta)
+
     @staticmethod
     def _remove_line_ending(line: bytes):
         """
-        To not have to deal with line endings in the data we can used this to
+        To not have to deal with line endings in the data we can use this to
         remove them.
         """
         if line.endswith(b'\r\n'):
@@ -351,16 +372,10 @@ class SaraN211Module:
         collected we run this method to process them.
         """
 
-        callbackmap = {'CSCON': self._update_connection_status_callback,
-                       'CEREG': self._update_eps_reg_status_callback,
-                       'CGPADDR': self._update_ip_address_callback,
-                       'NSONMI': self._add_available_message_callback,
-                       'CME ERROR': self._handle_cme_error, }
-
         _urc = urc.decode()
         logger.debug(f'Processing URC: {_urc}')
         urc_id = _urc[1:_urc.find(':')]
-        callback = callbackmap.get(urc_id, None)
+        callback = self.CALLBACKS.get(urc_id, None)
         if callback:
             callback(urc)
         else:
@@ -488,7 +503,6 @@ class SaraN211Module:
 
 
 class SaraR4Module(SaraN211Module):
-
     """
     Represents a Ublox SARA R4XX module.
     """
@@ -509,8 +523,12 @@ class SaraR4Module(SaraN211Module):
 
     SUPPORTED_SOCKET_TYPES = ['UDP', 'TCP']
 
+    SUPPORTED_RATS = {'NBIOT': AT_ENABLE_NBIOT_RADIO,
+                      'LTEM': AT_ENABLE_LTE_M_RADIO}
+
     def __init__(self, serial_port: str, roaming=False, echo=True):
         super().__init__(serial_port, roaming, echo)
+        self.current_rat = None
 
     def setup(self, radio_mode='NBIOT'):
         """
@@ -563,12 +581,9 @@ class SaraR4Module(SaraN211Module):
         self._at_action('AT+UCGED=5')
 
     def set_radio_mode(self, mode):
-        # TODO: Move to parent object. And have list of supported radios on object.
-        mode_dict = {'NBIOT': self.AT_ENABLE_NBIOT_RADIO,
-                     'LTEM': self.AT_ENABLE_LTE_M_RADIO}
-
-        response = self._at_action(mode_dict[mode.upper()])
+        response = self._at_action(self.SUPPORTED_RATS[mode.upper()])
         logger.info(f'Radio Mode set to {mode}')
+        self.current_rat = mode.upper()
         return response
 
     def set_pdp_context(self, apn, pdp_type="IP", cid=1):
@@ -615,21 +630,47 @@ class SaraR4Module(SaraN211Module):
         self.sockets[sock.socket_id] = sock
         return sock
 
-    def send_udp_data(self, host: str, port: int, data: str):
+    def send_udp_data(self, socket: int, host: str, port: int, data: str):
         """
         Send a UDP message
         """
         logger.info(f'Sending UDP message to {host}:{port}  :  {data}')
         _data = binascii.hexlify(data.encode()).upper().decode()
         length = len(data)
-        atc = f'AT+USOST=0,"{host}",{port},{length},"{_data}"'
+        atc = f'AT+USOST={socket},"{host}",{port},{length},"{_data}"'
         result = self._at_action(atc)
         return result
 
+    def read_udp_data(self, socket, length, timeout=60):
+        """
+        Reads data from a udp socket.
+
+        ..note
+
+            there is an issue on the R410 module that it is not issuing URCs
+            So to get the data we poll for data until we get some.
+        """
+        start_time = time.time()
+        while True:
+            time.sleep(0.1)
+            data = self._at_action(f'AT+USORF={socket},{length}',
+                                   capture_urc=True)
+            result = data[0].replace(b'"', b'').split(b',')[1:]  # remove URC
+            if result[0]:  # the IP address part
+                return result
+            duration = start_time - time.time()
+            if duration > timeout:
+                break
+
+        return None
+
+    def set_listening_socket(self, socket: int, port: int):
+        self._at_action(f'AT+USOLI={socket},{port}')
+
     def _await_connection(self, roaming, timeout=180):
         """
-        The process to verify that connection has occured is a bit different on
-        different devices. On R4xx we need continiously poll the connection
+        The process to verify that connection has occurred is a bit different on
+        different devices. On R4xx we need continuously poll the connection
         status and see if the connection status has changed.
         """
         logging.info(f'Awaiting Connection')
@@ -641,14 +682,18 @@ class SaraR4Module(SaraN211Module):
             if self.registration_status == 0:
                 continue
 
-            if roaming:
-                if self.registration_status == 5:
-                    break
+            if roaming and self.registration_status == 5:
+                break
 
-            else:
-                if self.registration_status == 1:
-                    break
+            if not roaming and self.registration_status == 1:
+                break
 
             elapsed_time = time.time() - start_time
             if elapsed_time > timeout:
                 raise ConnectionTimeoutError(f'Could not connect')
+
+    def await_udp_data(self, socket, length):
+
+        for _ in range(0, 5):
+            result = self.read_udp_data(socket, length)
+            print(result)
