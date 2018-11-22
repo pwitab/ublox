@@ -26,6 +26,19 @@ Fixed
 Security
 ^^^^^^^^
 
+v0.1.2 (2018-11-22)
+-------------------
+
+Changed
+^^^^^^^
+* Callback handling. Apparently it got object referencing problems when running
+  multiple threads using and instance of the module class.
+
+Fixed
+^^^^^
+* Small bug when a UDP message is not received we parsed and empty response.
+
+
 v0.1.1 (2018-11-21)
 -------------------
 

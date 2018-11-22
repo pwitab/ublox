@@ -9,7 +9,7 @@ DESCRIPTION = "Python library for U-blox cellular modules."
 URL = 'https://github.com/pwitab/ublox'
 EMAIL = 'henrik@pwit.se'
 AUTHOR = "Henrik Palmlund Wahlgren @ Palmlund Wahlgren Innovative Technology AB"
-REQUIRES_PYTHON = '~=3.6',
+REQUIRES_PYTHON = '~=3.6'
 # VERSION = None
 
 # What packages are required for this module to be executed?
@@ -87,16 +87,10 @@ setup(
     zip_safe=False,
     keywords='NB-IoT, LTE-M',
     classifiers=[
-        'Development Status :: 3 - Alpha',
-        'License :: OSI Approved :: MIT License',
-        'Natural Language :: English',
-        'Programming Language :: Python',
-        'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3 :: Only',
-        'Programming Language :: Python :: 3.6',
-        'Topic :: Software Development :: Libraries',
-
-    ], # $ setup.py publish support.
-    cmdclass={'upload': UploadCommand, },
+    ],
+    # $ setup.py publish support.
+    cmdclass={
+        'upload': UploadCommand,
+    },
 
 )

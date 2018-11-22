@@ -53,8 +53,6 @@ class SaraN211Module:
 
     SUPPORTED_SOCKET_TYPES = ['UDP']
 
-    CALLBACKS = {}
-
     def __init__(self, serial_port: str, roaming=False, echo=False):
         self._serial_port = serial_port
         self._serial = serial.Serial(self._serial_port, baudrate=self.BAUDRATE,
@@ -67,7 +65,7 @@ class SaraN211Module:
         self.available_messages = list()
         self.imei = None
         # TODO: make a class containing all states
-        self.registration_status = None
+        self.registration_status = 0
         self.radio_signal_power = None
         self.radio_total_power = None
         self.radio_tx_power = None
@@ -80,21 +78,6 @@ class SaraN211Module:
         self.radio_pci = None
         self.radio_rsrq = None
         self.radio_rsrp = None
-
-        self._add_callback('CSCON', self._update_connection_status_callback)
-        self._add_callback('CEREG', self._update_eps_reg_status_callback)
-        self._add_callback('CGPADDR', self._update_ip_address_callback)
-        self._add_callback('NSONMI', self._add_available_message_callback)
-        self._add_callback('CME ERROR', self._handle_cme_error)
-
-    def _add_callback(self, key, callback):
-        """
-        The add_callback is to that it is easy to define new functions for
-        callbacks on a module. It also enables the user to add their own
-        callback functions to override the existing.
-        """
-
-        self.CALLBACKS[key] = callback
 
     def reboot(self):
         """
@@ -114,6 +97,7 @@ class SaraN211Module:
         Running all commands to get the module up an working
         """
         logger.info(f'Starting initiation process')
+
         self.enable_signaling_connection_urc()
         self.enable_network_registration()
         self.enable_psm_mode()
@@ -241,7 +225,6 @@ class SaraN211Module:
         """
         Recieve a UDP message
         """
-        # TODO: Do getting of data and parsing in callback on URC.
         logger.info(f'Waiting for UDP message')
         self._read_line_until_contains('+NSONMI')
         message_info = self.available_messages.pop(0)
@@ -375,9 +358,16 @@ class SaraN211Module:
         _urc = urc.decode()
         logger.debug(f'Processing URC: {_urc}')
         urc_id = _urc[1:_urc.find(':')]
-        callback = self.CALLBACKS.get(urc_id, None)
-        if callback:
-            callback(urc)
+        if urc_id == 'CSCON':
+            self._update_connection_status_callback(urc)
+        elif urc_id == 'CEREG':
+            self._update_eps_reg_status_callback(urc)
+        elif urc_id == 'CGPADDR':
+            self._update_ip_address_callback(urc)
+        elif urc_id == 'NSONMI':
+            self._add_available_message_callback(urc)
+        elif urc_id == 'CME ERROR':
+            self._handle_cme_error(urc)
         else:
             logger.debug(f'Unhandled urc: {urc}')
 
@@ -641,7 +631,7 @@ class SaraR4Module(SaraN211Module):
         result = self._at_action(atc)
         return result
 
-    def read_udp_data(self, socket, length, timeout=60):
+    def read_udp_data(self, socket, length, timeout=10):
         """
         Reads data from a udp socket.
 
@@ -652,16 +642,16 @@ class SaraR4Module(SaraN211Module):
         """
         start_time = time.time()
         while True:
-            time.sleep(0.1)
+            time.sleep(0.5)
             data = self._at_action(f'AT+USORF={socket},{length}',
                                    capture_urc=True)
             result = data[0].replace(b'"', b'').split(b',')[1:]  # remove URC
             if result[0]:  # the IP address part
                 return result
-            duration = start_time - time.time()
+            duration = time.time() - start_time
             if duration > timeout:
                 break
-
+        logger.info('No UDP response read')
         return None
 
     def set_listening_socket(self, socket: int, port: int):
@@ -685,7 +675,7 @@ class SaraR4Module(SaraN211Module):
             if roaming and self.registration_status == 5:
                 break
 
-            if not roaming and self.registration_status == 1:
+            if (not roaming) and self.registration_status == 1:
                 break
 
             elapsed_time = time.time() - start_time

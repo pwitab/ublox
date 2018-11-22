@@ -54,7 +54,11 @@ class UDPSocket(UbloxSocket):
                           'once on the socket.')
 
         result = self.module.read_udp_data(socket=self.socket_id, length=bufsize)
-        ip, port, length, hex_data = result
-        address = (ip.decode(), int(port))
-        data = binascii.unhexlify(hex_data)
-        return data, address
+        if result:
+            ip, port, length, hex_data = result
+            address = (ip.decode(), int(port))
+            data = binascii.unhexlify(hex_data)
+            return data, address
+        else:
+            return None
+
