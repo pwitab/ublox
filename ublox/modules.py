@@ -248,7 +248,7 @@ class SaraN211Module:
             logger.debug(f'AT Command response = {irc}')
         return irc
 
-    def _write(self, data):
+    def _write(self, data, timeout=None):
         """
         Writing data to the module is simple. But it needs to end with \r\n
         to accept the command. The module will answer with an empty line as
@@ -256,6 +256,7 @@ class SaraN211Module:
         module is returned in the serial line. So we just need to omit it from
         the acknowledge.
         """
+
         data_to_send = data
         if isinstance(data, str):  # if someone sent in a string make it bytes
             data_to_send = data.encode()
@@ -270,7 +271,7 @@ class SaraN211Module:
         time.sleep(0.02)  # To give the module time to respond.
         logger.debug(f'Sent: {data_to_send}')
 
-        ack = self._serial.read_until()
+        ack = self._read_ack()
         logger.debug(f'Recieved ack: {ack}')
 
         if self.echo:
@@ -278,7 +279,7 @@ class SaraN211Module:
             # will get it in the ack response read. But it will not send \n.
             # so we can omitt the data we send + i char for the \r
             _echo = ack[:-2]
-            wanted_echo = data_to_send[:-2] + b'\r'
+            wanted_echo = self._remove_line_ending(data_to_send) + b'\r'
             if _echo != wanted_echo:
                 raise ValueError(f'Data echoed from module: {_echo} is not the '
                                  f'same data as sent to the module')
@@ -286,6 +287,19 @@ class SaraN211Module:
 
         if ack != b'\r\n':
             raise ValueError(f'Ack was not received properly, received {ack}')
+
+    def _read_ack(self, timeout=30):
+        start_time = time.time()
+        ack = b''
+        while (time.time() - start_time) < timeout:
+            response = self._serial.read_until()
+            if response:
+                ack = ack + response
+            if ack.endswith(b'\r\n'):
+                return ack
+
+        raise ATTimeoutError(f'Ack could not be fully read withing timout of '
+                             f'{timeout}. Read: {ack}')
 
     @staticmethod
     def _remove_line_ending(line: bytes):
