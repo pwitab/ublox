@@ -26,6 +26,16 @@ Fixed
 Security
 ^^^^^^^^
 
+v0.1.3 (2018-12-04)
+-------------------
+
+Added
+^^^^^
+* Timeouts to reads
+* Better logging to find problems in threaded environments.
+* Better exception descriptions.
+
+
 v0.1.2 (2018-11-22)
 -------------------
 
