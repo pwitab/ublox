@@ -271,7 +271,7 @@ class SaraN211Module:
         time.sleep(0.02)  # To give the module time to respond.
         logger.debug(f'Sent: {data_to_send}')
 
-        ack = self._read_ack()
+        ack = self._read_at_line()
         logger.debug(f'Recieved ack: {ack}')
 
         if self.echo:
@@ -288,7 +288,7 @@ class SaraN211Module:
         if ack != b'\r\n':
             raise ValueError(f'Ack was not received properly, received {ack}')
 
-    def _read_ack(self, timeout=30):
+    def _read_at_line(self, timeout=30):
         start_time = time.time()
         ack = b''
         while (time.time() - start_time) < timeout:
@@ -298,8 +298,8 @@ class SaraN211Module:
             if ack.endswith(b'\r\n'):
                 return ack
 
-        raise ATTimeoutError(f'Ack could not be fully read withing timout of '
-                             f'{timeout}. Read: {ack}')
+        raise ATTimeoutError(f'AT line could not be fully read withing timeout'
+                             f' of {timeout}. Read: {ack}')
 
     @staticmethod
     def _remove_line_ending(line: bytes):
@@ -327,14 +327,8 @@ class SaraN211Module:
         irc_list = list()
         start_time = time.time()
         while True:
-            try:
-                data = self._serial.read_until()
-            except serial.SerialTimeoutException:
-                # continue to read lines until AT Timeout
-                duration = time.time() - start_time
-                if duration > timeout:
-                    raise ATTimeoutError
-                continue
+
+            data = self._read_at_line()
             line = self._remove_line_ending(data)
 
             if line.startswith(b'+'):
