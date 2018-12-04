@@ -145,7 +145,7 @@ class SaraN211Module:
         else:
             at_command = f'AT+COPS=0'
 
-        self._at_action(at_command, timeout=300)
+        self._at_action(at_command, timeout=200)
         self._await_connection(roaming or self.roaming)
         logger.info(f'Connected to {operator}')
 
@@ -240,7 +240,7 @@ class SaraN211Module:
         and all URCs between the at action and OK will be returned as result.
         """
         logger.debug(f'Applying AT Command: {at_command}')
-        self._write(at_command)
+        self._write(at_command, timeout=timeout)
         time.sleep(0.02)  # To give the end devices some time to answer.
         irc = self._read_line_until_contains('OK', timeout=timeout,
                                              capture_urc=capture_urc)
@@ -248,7 +248,7 @@ class SaraN211Module:
             logger.debug(f'AT Command response = {irc}')
         return irc
 
-    def _write(self, data, timeout=None):
+    def _write(self, data, timeout=30):
         """
         Writing data to the module is simple. But it needs to end with \r\n
         to accept the command. The module will answer with an empty line as
@@ -271,7 +271,7 @@ class SaraN211Module:
         time.sleep(0.02)  # To give the module time to respond.
         logger.debug(f'Sent: {data_to_send}')
 
-        ack = self._read_at_line()
+        ack = self._read_at_line(timeout=timeout)
         logger.debug(f'Recieved ack: {ack}')
 
         if self.echo:
@@ -312,7 +312,7 @@ class SaraN211Module:
         else:
             return line
 
-    def _read_line_until_contains(self, slice, capture_urc=False, timeout=5):
+    def _read_line_until_contains(self, slice, capture_urc=False, timeout=30):
         """
         Similar to read_until, but will read whole lines so we can use proper
         timeout management. Any URC:s that is read will be handled and we will
