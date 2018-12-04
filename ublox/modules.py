@@ -1,5 +1,4 @@
 import time
-
 import serial
 import binascii
 from collections import namedtuple
@@ -12,10 +11,6 @@ logger = logging.getLogger(__name__)
 Stats = namedtuple('Stats', 'type name value')
 
 
-# TODO: Make communication with the module in a separate thread. Using a queue
-# for communication of AT commands and implement a state-machine for handling
-# AT-commands. Also always keep reading thte serial line for URCs
-
 class CMEError(Exception):
     """CME ERROR on Module"""
 
@@ -24,7 +19,11 @@ class ATError(Exception):
     """AT Command Error"""
 
 
-class ConnectionTimeoutError(Exception):
+class ATTimeoutError(ATError):
+    """Making an AT Action took to long"""
+
+
+class ConnectionTimeoutError(ATTimeoutError):
     """Module did not connect within the specified time"""
 
 
@@ -56,7 +55,7 @@ class SaraN211Module:
     def __init__(self, serial_port: str, roaming=False, echo=False):
         self._serial_port = serial_port
         self._serial = serial.Serial(self._serial_port, baudrate=self.BAUDRATE,
-                                     rtscts=self.RTSCTS, timeout=300)
+                                     rtscts=self.RTSCTS, timeout=5)
         self.echo = echo
         self.roaming = roaming
         self.ip = None
@@ -146,7 +145,7 @@ class SaraN211Module:
         else:
             at_command = f'AT+COPS=0'
 
-        self._at_action(at_command)
+        self._at_action(at_command, timeout=300)
         self._await_connection(roaming or self.roaming)
         logger.info(f'Connected to {operator}')
 
@@ -233,7 +232,7 @@ class SaraN211Module:
         logger.info(f'Recieved UDP message: {response}')
         return response
 
-    def _at_action(self, at_command, capture_urc=False):
+    def _at_action(self, at_command, timeout=10, capture_urc=False):
         """
         Small wrapper to issue a AT command. Will wait for the Module to return
         OK. Some modules return answers to AT actions as URC:s before the OK
@@ -242,7 +241,9 @@ class SaraN211Module:
         """
         logger.debug(f'Applying AT Command: {at_command}')
         self._write(at_command)
-        irc = self._read_line_until_contains('OK', capture_urc=capture_urc)
+        time.sleep(0.02)  # To give the end devices some time to answer.
+        irc = self._read_line_until_contains('OK', timeout=timeout,
+                                             capture_urc=capture_urc)
         if irc is not None:
             logger.debug(f'AT Command response = {irc}')
         return irc
@@ -266,21 +267,25 @@ class SaraN211Module:
         # start_time = time.time()
 
         self._serial.write(data_to_send)
-
+        time.sleep(0.02)  # To give the module time to respond.
         logger.debug(f'Sent: {data_to_send}')
-        ack = self._serial.readline()
+
+        ack = self._serial.read_until()
+        logger.debug(f'Recieved ack: {ack}')
 
         if self.echo:
             # when echo is on we will have recieved the message we sent and
             # will get it in the ack response read. But it will not send \n.
             # so we can omitt the data we send + i char for the \r
-            # TODO: check that the data we recieved acctually is data + \r
-            ack = ack[(len(data) + 1):]
+            _echo = ack[:-2]
+            wanted_echo = data_to_send[:-2] + b'\r'
+            if _echo != wanted_echo:
+                raise ValueError(f'Data echoed from module: {_echo} is not the '
+                                 f'same data as sent to the module')
+            ack = ack[len(wanted_echo):]
 
         if ack != b'\r\n':
             raise ValueError(f'Ack was not received properly, received {ack}')
-
-        # To give the end devices some time to answer. Recommended is 20 ms  # end_time = time.time()  # duration = end_time - start_time  # if duration < 0.02:  #    delta = 0.02-duration  #    time.sleep(delta)
 
     @staticmethod
     def _remove_line_ending(line: bytes):
@@ -293,7 +298,7 @@ class SaraN211Module:
         else:
             return line
 
-    def _read_line_until_contains(self, slice, capture_urc=False):
+    def _read_line_until_contains(self, slice, capture_urc=False, timeout=5):
         """
         Similar to read_until, but will read whole lines so we can use proper
         timeout management. Any URC:s that is read will be handled and we will
@@ -306,9 +311,17 @@ class SaraN211Module:
 
         data_list = list()
         irc_list = list()
-
+        start_time = time.time()
         while True:
-            line = self._remove_line_ending(self._serial.readline())
+            try:
+                data = self._serial.read_until()
+            except serial.SerialTimeoutException:
+                # continue to read lines until AT Timeout
+                duration = time.time() - start_time
+                if duration > timeout:
+                    raise ATTimeoutError
+                continue
+            line = self._remove_line_ending(data)
 
             if line.startswith(b'+'):
                 if capture_urc:
@@ -333,6 +346,10 @@ class SaraN211Module:
                 break
             else:
                 data_list.append(line)
+
+            duration = time.time() - start_time
+            if duration > timeout:
+                raise ATTimeoutError
 
         clean_list = [response for response in data_list if not response == b'']
 
@@ -554,10 +571,7 @@ class SaraR4Module(SaraN211Module):
             Only supports NB IoT RAT.
         """
         logger.info(f'Setting Band Mask for bands {bands}')
-        bands_to_set = self.DEFAULT_BANDS
-        if bands:
-            bands_to_set = bands
-
+        bands_to_set = bands or self.DEFAULT_BANDS
         total_band_mask = 0
 
         for band in bands_to_set:
@@ -591,24 +605,28 @@ class SaraR4Module(SaraN211Module):
         channel_nr = None
         rsrq = None
         rsrp = None
-        for item in result:
-            data = item[7:]  # remove the data description
-            if data.endswith(b'\r'):
-                data = data[:-2]
-            else:
-                data = data[:-1]
+        try:
+            for item in result:
+                data = item[7:]  # remove the data description
+                if data.endswith(b'\r'):
+                    data = data[:-2]
+                else:
+                    data = data[:-1]
 
-            if item.startswith(b'+RSRQ'):
-                cell_id, channel_nr, rsrq = data.split(b',')
+                if item.startswith(b'+RSRQ'):
+                    cell_id, channel_nr, rsrq = data.split(b',')
 
-            elif item.startswith(b'+RSRP'):
-                cell_id, channel_nr, rsrp = data.split(b',')
+                elif item.startswith(b'+RSRP'):
+                    cell_id, channel_nr, rsrp = data.split(b',')
 
-        self.radio_earfcn = channel_nr
-        self.radio_cell_id = cell_id
+            self.radio_earfcn = channel_nr
+            self.radio_cell_id = cell_id
 
-        self.radio_rsrp = float(rsrp.decode().replace('"', ''))
-        self.radio_rsrq = float(rsrq.decode().replace('"', ''))
+            self.radio_rsrp = float(rsrp.decode().replace('"', ''))
+            self.radio_rsrq = float(rsrq.decode().replace('"', ''))
+
+        except ValueError as e:
+            logger.info('Error in parsing radio statistics')
 
     def _create_upd_socket(self, port):
         at_command = f'{self.AT_CREATE_UDP_SOCKET}'
@@ -642,7 +660,7 @@ class SaraR4Module(SaraN211Module):
         """
         start_time = time.time()
         while True:
-            time.sleep(0.5)
+            time.sleep(2)
             data = self._at_action(f'AT+USORF={socket},{length}',
                                    capture_urc=True)
             result = data[0].replace(b'"', b'').split(b',')[1:]  # remove URC
@@ -655,6 +673,8 @@ class SaraR4Module(SaraN211Module):
         return None
 
     def set_listening_socket(self, socket: int, port: int):
+        """Set a socket into listening mode to be able to receive data on
+        the socket."""
         self._at_action(f'AT+USOLI={socket},{port}')
 
     def _await_connection(self, roaming, timeout=180):
@@ -681,9 +701,3 @@ class SaraR4Module(SaraN211Module):
             elapsed_time = time.time() - start_time
             if elapsed_time > timeout:
                 raise ConnectionTimeoutError(f'Could not connect')
-
-    def await_udp_data(self, socket, length):
-
-        for _ in range(0, 5):
-            result = self.read_udp_data(socket, length)
-            print(result)
